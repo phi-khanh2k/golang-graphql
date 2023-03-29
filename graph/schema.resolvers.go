@@ -15,7 +15,7 @@ import (
 	"github.com/glyphack/graphlq-golang/internal/links"
 	"github.com/glyphack/graphlq-golang/internal/users"
 	"github.com/glyphack/graphlq-golang/pkg/jwt"
-	kafka "github.com/duyvvu997/graphlq-golang/internal/pkg/kafka"
+	kafka "github.com/duyvu997/golang-graphql/tree/main/internal/pkg/db/kafka"
 
 )
 
