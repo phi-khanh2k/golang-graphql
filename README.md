@@ -60,3 +60,14 @@ Now navigate to https://localhost:8080 you can see graphiql playground and query
 
 ### Tutorial
 to see the latest version of tutorial visit https://www.howtographql.com/graphql-go/0-introduction/
+
+
+
+### Example
+```
+mutation {
+  # createUser(input: { username: "1123", password: "adasdadad" }) ,
+  login(input: { username: "1123", password: "adasdadad" }) 
+}
+
+```

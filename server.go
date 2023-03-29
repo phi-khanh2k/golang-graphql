@@ -7,8 +7,8 @@ import (
 
 	"github.com/glyphack/graphlq-golang/graph"
 	"github.com/glyphack/graphlq-golang/graph/generated"
-	"github.com/glyphack/graphlq-golang/internal/auth"
-	_ "github.com/glyphack/graphlq-golang/internal/auth"
+	// "github.com/glyphack/graphlq-golang/internal/auth"
+	// _ "github.com/glyphack/graphlq-golang/internal/auth"
 	database "github.com/glyphack/graphlq-golang/internal/pkg/db/mysql"
 
 	"github.com/99designs/gqlgen/graphql/handler"
@@ -25,7 +25,7 @@ func main() {
 	}
 
 	router := chi.NewRouter()
-	router.Use(auth.Middleware())
+	// router.Use(auth.Middleware())
 	database.InitDB()
 	defer database.CloseDB()
 	database.Migrate()
