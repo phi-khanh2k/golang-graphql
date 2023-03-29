@@ -25,7 +25,16 @@ func main() {
 	}
 
 	router := chi.NewRouter()
+	// Add CORS middleware around every request
+	// See https://github.com/rs/cors for full option listing
+	router.Use(cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowCredentials: true,
+		Debug:            true,
+	}).Handler)
+
 	// router.Use(auth.Middleware())
+	
 	database.InitDB()
 	defer database.CloseDB()
 	database.Migrate()
@@ -34,5 +43,10 @@ func main() {
 	router.Handle("/query", server)
 
 	log.Printf("connect to http://localhost:%s/ for GraphQL playground", port)
-	log.Fatal(http.ListenAndServe(":"+port, router))
+
+	err := http.ListenAndServe(":"+port, router)
+
+	if err != nil {
+		log.Fatal(err)
+	}
 }
