@@ -4,21 +4,20 @@ package graph
 // will be copied through when generating and any unknown code will be moved to the end.
 
 import (
-	"log"
 	"context"
-	"fmt"
-	"strconv"
 	"encoding/json"
+	"fmt"
+	"log"
+	"strconv"
 	"time"
 
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/glyphack/graphlq-golang/graph/generated"
 	"github.com/glyphack/graphlq-golang/graph/model"
 	"github.com/glyphack/graphlq-golang/internal/auth"
 	"github.com/glyphack/graphlq-golang/internal/links"
 	"github.com/glyphack/graphlq-golang/internal/users"
 	"github.com/glyphack/graphlq-golang/pkg/jwt"
-	"github.com/confluentinc/confluent-kafka-go/kafka"
-
 )
 
 func (r *mutationResolver) CreateLink(ctx context.Context, input model.NewLink) (*model.Link, error) {
@@ -60,14 +59,13 @@ func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) 
 		}
 	}()
 
-	
 	kafkaTopic := "test1"
 
 	CreateTopic(kafkaTopic)
 
 	// send task to consumer via message broker
 	message, errMshal := json.Marshal(model.NewUser{
-		Username:  input.Username,
+		Username: input.Username,
 		Password: input.Password,
 	})
 	if errMshal != nil {
@@ -82,7 +80,7 @@ func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) 
 	// Wait for message deliveries before shutting down
 	p.Flush(15 * 1000)
 
-	return "message", nil
+	return "message ok", nil
 }
 
 func (r *mutationResolver) Login(ctx context.Context, input model.Login) (string, error) {
@@ -128,16 +126,16 @@ func (r *queryResolver) Links(ctx context.Context) ([]*model.Link, error) {
 // !!! WARNING !!!
 // The code below was going to be deleted when updating resolvers. It has been copied here so you have
 // one last chance to move it out of harms way if you want. There are two reasons this happens:
-//  - When renaming or deleting a resolver the old code will be put in here. You can safely delete
-//    it when you're done.
-//  - You have helper methods in this file. Move them out to keep these resolver files clean.
+//   - When renaming or deleting a resolver the old code will be put in here. You can safely delete
+//     it when you're done.
+//   - You have helper methods in this file. Move them out to keep these resolver files clean.
 func CreateTopic(topicName string) {
-	a, err := kafka.NewAdminClient(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	admin, err := kafka.NewAdminClient(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
 	if err != nil {
 		panic(err)
 	}
 
-	defer a.Close()
+	defer admin.Close()
 
 	maxDur, err := time.ParseDuration("60s")
 	if err != nil {
@@ -145,7 +143,14 @@ func CreateTopic(topicName string) {
 	}
 
 	ctx := context.Background()
-	results, err := a.CreateTopics(
+	// Check if the topic exists
+	exists, err := topicExists(admin, topicName)
+	if exists {
+		fmt.Println("Topic already exists")
+		return 
+	} 
+	
+	results, err := admin.CreateTopics(
 		ctx,
 		// Multiple topics can be created simultaneously
 		// by providing more TopicSpecification structs here.
@@ -159,8 +164,22 @@ func CreateTopic(topicName string) {
 	}
 
 	log.Println("results:", results)
+	
+
 }
 
+func topicExists(admin *kafka.AdminClient, topic string) (bool, error) {
+	meta, err := admin.GetMetadata(&topic, false, 1000)
+	if err != nil {
+		return false, err
+	}
+
+	if _, ok := meta.Topics[topic]; ok {
+		return true, nil
+	}
+
+	return false, nil
+}
 
 // Mutation returns generated.MutationResolver implementation.
 func (r *Resolver) Mutation() generated.MutationResolver { return &mutationResolver{r} }

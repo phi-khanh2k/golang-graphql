@@ -6,6 +6,7 @@ require (
 	github.com/99designs/gqlgen v0.11.3
 	github.com/Microsoft/go-winio v0.4.14 // indirect
 	github.com/Shopify/sarama v1.38.1
+	github.com/alecthomas/kingpin/v2 v2.3.2 // indirect
 	github.com/confluentinc/confluent-kafka-go v1.9.2
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/docker/distribution v2.7.1+incompatible // indirect
