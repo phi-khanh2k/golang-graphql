@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"encoding/json"
+	"time"
 
 	"github.com/glyphack/graphlq-golang/graph/generated"
 	"github.com/glyphack/graphlq-golang/graph/model"
@@ -15,7 +17,7 @@ import (
 	"github.com/glyphack/graphlq-golang/internal/links"
 	"github.com/glyphack/graphlq-golang/internal/users"
 	"github.com/glyphack/graphlq-golang/pkg/jwt"
-	kafka "github.com/duyvu997/golang-graphql/tree/main/internal/pkg/db/kafka"
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 
 )
 
@@ -37,59 +39,50 @@ func (r *mutationResolver) CreateLink(ctx context.Context, input model.NewLink) 
 }
 
 func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) (string, error) {
-	var user users.User
-	user.Username = input.Username
-	user.Password = input.Password
-	// user.Create()
-	// token, err := jwt.GenerateToken(user.Username)
-	// if err != nil {
-	// 	return "", err
-	// }
 
-	// Setup Logging
-	// customFormatter := new(logrus.TextFormatter)
-	// customFormatter.TimestampFormat = "2006-01-02 15:04:05"
-	// customFormatter.FullTimestamp = true
-	// logrus.SetFormatter(customFormatter)
-
-	// connect to kafka
-	kafkaBroker := []string{"127.0.0.1:9092"}
-	kafkaProducer, errConnection := kafka.ConnectProducer(kafkaBroker)
-	if errConnection != nil {
-		// logrus.Printf("error: %s", "Unable to configure kafka")
-		return
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	if err != nil {
+		panic(err)
 	}
-	defer kafkaProducer.Close()
 
-	kafkaClientId := "1003"
+	defer p.Close()
+	// Delivery report handler for produced messages
+	go func() {
+		for e := range p.Events() {
+			switch ev := e.(type) {
+			case *kafka.Message:
+				if ev.TopicPartition.Error != nil {
+					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
+				} else {
+					fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
+				}
+			}
+		}
+	}()
+
+	
 	kafkaTopic := "test1"
 
+	CreateTopic(kafkaTopic)
+
 	// send task to consumer via message broker
-	message, errMarshal := json.Marshal(model.User{
-		Username: "Welcome to kafka in Golang",
-		Password: "Welcome to kafka in Golang1",
+	message, errMshal := json.Marshal(model.NewUser{
+		Username:  input.Username,
+		Password: input.Password,
 	})
-
-	if errMarshal != nil {
-		log.Println(http.StatusUnprocessableEntity, map[string]interface{}{
-			"error": map[string]interface{}{
-				"message": fmt.Sprintf("error while marshalling json: %s", errMarshal.Error()),
-			},
-		})
-		return
+	if errMshal != nil {
+		return "errMshal", nil
 	}
 
-	errPushMessage := kafka.PushToQueue(kafkaBroker, kafkaClientId, kafkaTopic, message)
-	if errPushMessage != nil {
-		fmt.Println(http.StatusUnprocessableEntity, map[string]interface{}{
-			"error": map[string]interface{}{
-				"message": fmt.Sprintf("error while push message into kafka: %s", errPushMessage.Error()),
-			},
-		})
-		return
-	}
+	p.Produce(&kafka.Message{
+		TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
+		Value:          []byte(message),
+	}, nil)
 
-	return 123, nil
+	// Wait for message deliveries before shutting down
+	p.Flush(15 * 1000)
+
+	return "message", nil
 }
 
 func (r *mutationResolver) Login(ctx context.Context, input model.Login) (string, error) {
@@ -98,7 +91,6 @@ func (r *mutationResolver) Login(ctx context.Context, input model.Login) (string
 	user.Password = input.Password
 	correct := user.Authenticate()
 	if !correct {
-		// 1
 		return "", &users.WrongUsernameOrPasswordError{}
 	}
 	token, err := jwt.GenerateToken(user.Username)
@@ -132,6 +124,43 @@ func (r *queryResolver) Links(ctx context.Context) ([]*model.Link, error) {
 	}
 	return resultLinks, nil
 }
+
+// !!! WARNING !!!
+// The code below was going to be deleted when updating resolvers. It has been copied here so you have
+// one last chance to move it out of harms way if you want. There are two reasons this happens:
+//  - When renaming or deleting a resolver the old code will be put in here. You can safely delete
+//    it when you're done.
+//  - You have helper methods in this file. Move them out to keep these resolver files clean.
+func CreateTopic(topicName string) {
+	a, err := kafka.NewAdminClient(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+	if err != nil {
+		panic(err)
+	}
+
+	defer a.Close()
+
+	maxDur, err := time.ParseDuration("60s")
+	if err != nil {
+		panic("ParseDuration(60s)")
+	}
+
+	ctx := context.Background()
+	results, err := a.CreateTopics(
+		ctx,
+		// Multiple topics can be created simultaneously
+		// by providing more TopicSpecification structs here.
+		[]kafka.TopicSpecification{{
+			Topic: topicName,
+		}},
+		// Admin options
+		kafka.SetAdminOperationTimeout(maxDur))
+	if err != nil {
+		log.Printf("Failed to create topic: %v\n", err)
+	}
+
+	log.Println("results:", results)
+}
+
 
 // Mutation returns generated.MutationResolver implementation.
 func (r *Resolver) Mutation() generated.MutationResolver { return &mutationResolver{r} }
