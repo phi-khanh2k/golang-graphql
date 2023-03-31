@@ -5,11 +5,12 @@ package graph
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
 	"time"
+	"os"
+	"os/signal"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/glyphack/graphlq-golang/graph/generated"
@@ -18,6 +19,19 @@ import (
 	"github.com/glyphack/graphlq-golang/internal/links"
 	"github.com/glyphack/graphlq-golang/internal/users"
 	"github.com/glyphack/graphlq-golang/pkg/jwt"
+
+	kingpin "github.com/alecthomas/kingpin/v2"
+
+	"github.com/Shopify/sarama"
+)
+
+
+var (
+	brokerList        = kingpin.Flag("brokerList", "List of brokers to connect").Default("localhost:9092").Strings()
+	topic             = kingpin.Flag("topic", "Topic name").Default("test1_reply").String()
+	partition         = kingpin.Flag("partition", "Partition number").Default("0").String()
+	offsetType        = kingpin.Flag("offsetType", "Offset Type (OffsetNewest | OffsetOldest)").Default("-1").Int()
+	messageCountStart = kingpin.Flag("messageCountStart", "Message counter start from:").Int()
 )
 
 func (r *mutationResolver) CreateLink(ctx context.Context, input model.NewLink) (*model.Link, error) {
@@ -38,49 +52,95 @@ func (r *mutationResolver) CreateLink(ctx context.Context, input model.NewLink) 
 }
 
 func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) (string, error) {
+	broker := "localhost:9092"
+    topic1 := "test1_reply"
 
-	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+    // Create a producer
+    producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": broker})
+    if err != nil {
+        panic(err)
+    }
+
+    // // Create a consumer
+    // consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
+    //     "bootstrap.servers": broker,
+    //     "group.id":          "my-group",
+    //     "auto.offset.reset": "earliest",
+    // })
+    // if err != nil {
+    //     panic(err)
+    // }
+
+    // // Subscribe to the topic
+    // consumer.SubscribeTopics([]string{topic1}, nil)
+
+	// Set up a signal handler to stop the consumer when the program receives a SIGINT or SIGTERM signal
+    // sigchan := make(chan os.Signal, 1)
+    // signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+    // go func() {
+    //     <-sigchan
+    //     fmt.Println("Received signal, shutting down consumer...")
+    //     consumer.Close()
+    // }()
+
+    // Produce a message to the topic
+    value := "hello, world"
+    err = producer.Produce(&kafka.Message{
+        TopicPartition: kafka.TopicPartition{Topic: &topic1, Partition: 0},
+        Value:          []byte(value),
+    }, nil)
+    if err != nil {
+        panic(err)
+    }
+	producer.Close()
+	// =================================================================
+	kingpin.Parse()
+	config := sarama.NewConfig()
+	config.Consumer.Return.Errors = true
+	brokers := *brokerList
+	master, err := sarama.NewConsumer(brokers, config)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
-
-	defer p.Close()
-	// Delivery report handler for produced messages
-	go func() {
-		for e := range p.Events() {
-			switch ev := e.(type) {
-			case *kafka.Message:
-				if ev.TopicPartition.Error != nil {
-					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
-				} else {
-					fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
-				}
-			}
+	defer func() {
+		if err := master.Close(); err != nil {
+			log.Panic(err)
 		}
 	}()
-
-	kafkaTopic := "test1"
-
-	CreateTopic(kafkaTopic)
-
-	// send task to consumer via message broker
-	message, errMshal := json.Marshal(model.NewUser{
-		Username: input.Username,
-		Password: input.Password,
-	})
-	if errMshal != nil {
-		return "errMshal", nil
+	consumer, err := master.ConsumePartition(*topic, 0, sarama.OffsetOldest)
+	if err != nil {
+		log.Panic(err)
 	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+	doneCh := make(chan struct{})
+	go func() {
+		log.Println("Processed")
 
-	p.Produce(&kafka.Message{
-		TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
-		Value:          []byte(message),
-	}, nil)
+		for {
+		log.Println("Processed11")
 
-	// Wait for message deliveries before shutting down
-	p.Flush(15 * 1000)
+			select {
+			case err := <-consumer.Errors():
+				log.Println(err)
+			case msg := <-consumer.Messages():
+				*messageCountStart++
+				log.Println("Received messages", string(msg.Key), string(msg.Value))
+				consumer.Close()
+				doneCh <- struct{}{}
+				return
+			case <-signals:
+				log.Println("Interrupt is detected")
+				doneCh <- struct{}{}
+			}
+		}
+		return
+	}()
+	<-doneCh
+	log.Println("Processed", *messageCountStart, "messages")
+	// =================================================================
 
-	return "message ok", nil
+	return "sdad", nil
 }
 
 func (r *mutationResolver) Login(ctx context.Context, input model.Login) (string, error) {
@@ -147,9 +207,9 @@ func CreateTopic(topicName string) {
 	exists, err := topicExists(admin, topicName)
 	if exists {
 		fmt.Println("Topic already exists")
-		return 
-	} 
-	
+		return
+	}
+
 	results, err := admin.CreateTopics(
 		ctx,
 		// Multiple topics can be created simultaneously
@@ -164,7 +224,6 @@ func CreateTopic(topicName string) {
 	}
 
 	log.Println("results:", results)
-	
 
 }
 
@@ -179,6 +238,21 @@ func topicExists(admin *kafka.AdminClient, topic string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+type Consumer struct{}
+
+func (c *Consumer) Setup(sarama.ConsumerGroupSession) error   { return nil }
+func (c *Consumer) Cleanup(sarama.ConsumerGroupSession) error { return nil }
+func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for msg := range claim.Messages() {
+		fmt.Printf("Message topic:%q partition:%d offset:%d message:%s\n", msg.Topic, msg.Partition, msg.Offset, msg.Value)
+
+		// Mark message as consumed
+		session.MarkMessage(msg, "")
+	}
+
+	return nil
 }
 
 // Mutation returns generated.MutationResolver implementation.
