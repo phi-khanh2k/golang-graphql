@@ -2,17 +2,18 @@ package database
 
 import (
 	"database/sql"
+	"log"
+
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate"
 	"github.com/golang-migrate/migrate/database/mysql"
 	_ "github.com/golang-migrate/migrate/source/file"
-	"log"
 )
 
 var Db *sql.DB
 
 func InitDB() {
-	db, err := sql.Open("mysql", "root:dbpass@(127.0.0.1:3306)/hackernews")
+	db, err := sql.Open("mysql", "root:password@(127.0.0.1:3306)/graph")
 	if err != nil {
 		log.Panic(err)
 	}

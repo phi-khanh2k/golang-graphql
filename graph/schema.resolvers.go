@@ -6,10 +6,7 @@ package graph
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/signal"
 	"strconv"
-	"syscall"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/glyphack/graphlq-golang/graph/generated"
@@ -86,15 +83,23 @@ func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) 
 	if err != nil {
 		panic(err)
 	}
+
+	deliveryChan := make(chan kafka.Event)
 	// Produce a message to the topic
-	value := "hello, world"
+	value := "hello, world 11"
 	err = producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &topic1, Partition: 0},
 		Value:          []byte(value),
-	}, nil)
+	}, deliveryChan)
 	if err != nil {
 		panic(err)
 	}
+	e := <-deliveryChan
+	m := e.(*kafka.Message)
+	if m.TopicPartition.Error != nil {
+		fmt.Printf("Delivery failed: %v", m.TopicPartition.Error)
+	}
+	close(deliveryChan)
 	producer.Close()
 
 	// =================================================================
@@ -115,67 +120,23 @@ func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) 
 
 	topic := "test1"
 
-	partition := 0
-	tp := kafka.TopicPartition{Topic: &topic, Partition: int32(partition)}
-	err = consumer.Assign([]kafka.TopicPartition{tp})
-	if err != nil {
-		panic(err)
-	}
-
-	partitions, err := consumer.Assignment()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("Consumer is assigned to partitions: %v\n", partitions)
-
-	sigchan := make(chan os.Signal, 1)
-	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
-
+	consumer.SubscribeTopics([]string{topic}, nil)
 	run := true
 	for run {
-		select {
-		case sig := <-sigchan:
-			fmt.Printf("Caught signal %v: terminating\n", sig)
+		msg, err := consumer.ReadMessage(-1)
+		if err == nil {
+			fmt.Printf("Message on %s: %s\n", msg.TopicPartition, string(msg.Value))
 			run = false
-		default:
-
-			// Poll for messages
-			ev, err := consumer.ReadMessage(-1)
+			com, err := consumer.CommitMessage(msg)
+			fmt.Println("Something right here", com, err)
 			if err != nil {
-				fmt.Println("Timeout")
-				continue
+				fmt.Println("Error", err)
 			}
-			fmt.Println(ev)
-
-			if ev == nil {
-				continue
-			}
-
-			com, err := consumer.CommitOffsets([]kafka.TopicPartition{{Topic: ev.TopicPartition.Topic, Partition: ev.TopicPartition.Partition, Offset: ev.TopicPartition.Offset}})
-			fmt.Println(com, err)
-			// switch e :=ev {
-			// case *kafka.Message:
-			// 	fmt.Printf("Received message on partition %d: %s\n", e.TopicPartition.Partition, string(e.Value))
-
-			// 	// Commit the message offset
-			// 	offset := e.TopicPartition.Offset
-			// 	fmt.Println(e.TopicPartition.Topic, e.TopicPartition.Partition, offset)
-
-			// 	com, err := consumer.CommitMessage(e)
-			// 	fmt.Println(com, err)
-
-			// case kafka.Error:
-			// 	fmt.Fprintf(os.Stderr, "Error: %v\n", e)
-			// 	if e.Code() == kafka.ErrAllBrokersDown {
-			// 		run = false
-			// 	}
-			// default:
-			// 	fmt.Printf("Ignored event: %s\n", ev)
-			// }
+		} else {
+			// The client will automatically try to recover from all errors.
+			fmt.Printf("Consumer error: %v (%v)\n", err, msg)
 		}
 	}
-
-	consumer.Close()
 
 	return "sdad", nil
 }
