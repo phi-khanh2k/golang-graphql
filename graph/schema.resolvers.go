@@ -107,7 +107,6 @@ func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) 
 		"bootstrap.servers":                     "localhost:9092",
 		"group.id":                              "test-group",
 		"go.application.rebalance.enable":       true,
-		"acks":                                  "all",
 		"max.in.flight.requests.per.connection": 1,
 	}
 
