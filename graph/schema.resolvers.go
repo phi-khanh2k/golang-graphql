@@ -6,11 +6,10 @@ package graph
 import (
 	"context"
 	"fmt"
-	"log"
-	"strconv"
-	"time"
 	"os"
 	"os/signal"
+	"strconv"
+	"syscall"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/glyphack/graphlq-golang/graph/generated"
@@ -19,19 +18,6 @@ import (
 	"github.com/glyphack/graphlq-golang/internal/links"
 	"github.com/glyphack/graphlq-golang/internal/users"
 	"github.com/glyphack/graphlq-golang/pkg/jwt"
-
-	kingpin "github.com/alecthomas/kingpin/v2"
-
-	"github.com/Shopify/sarama"
-)
-
-
-var (
-	brokerList        = kingpin.Flag("brokerList", "List of brokers to connect").Default("localhost:9092").Strings()
-	topic             = kingpin.Flag("topic", "Topic name").Default("test1_reply").String()
-	partition         = kingpin.Flag("partition", "Partition number").Default("0").String()
-	offsetType        = kingpin.Flag("offsetType", "Offset Type (OffsetNewest | OffsetOldest)").Default("-1").Int()
-	messageCountStart = kingpin.Flag("messageCountStart", "Message counter start from:").Int()
 )
 
 func (r *mutationResolver) CreateLink(ctx context.Context, input model.NewLink) (*model.Link, error) {
@@ -49,98 +35,6 @@ func (r *mutationResolver) CreateLink(ctx context.Context, input model.NewLink) 
 		Name: user.Username,
 	}
 	return &model.Link{ID: strconv.FormatInt(linkId, 10), Title: link.Title, Address: link.Address, User: grahpqlUser}, nil
-}
-
-func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) (string, error) {
-	broker := "localhost:9092"
-    topic1 := "test1_reply"
-
-    // Create a producer
-    producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": broker})
-    if err != nil {
-        panic(err)
-    }
-
-    // // Create a consumer
-    // consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
-    //     "bootstrap.servers": broker,
-    //     "group.id":          "my-group",
-    //     "auto.offset.reset": "earliest",
-    // })
-    // if err != nil {
-    //     panic(err)
-    // }
-
-    // // Subscribe to the topic
-    // consumer.SubscribeTopics([]string{topic1}, nil)
-
-	// Set up a signal handler to stop the consumer when the program receives a SIGINT or SIGTERM signal
-    // sigchan := make(chan os.Signal, 1)
-    // signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
-    // go func() {
-    //     <-sigchan
-    //     fmt.Println("Received signal, shutting down consumer...")
-    //     consumer.Close()
-    // }()
-
-    // Produce a message to the topic
-    value := "hello, world"
-    err = producer.Produce(&kafka.Message{
-        TopicPartition: kafka.TopicPartition{Topic: &topic1, Partition: 0},
-        Value:          []byte(value),
-    }, nil)
-    if err != nil {
-        panic(err)
-    }
-	producer.Close()
-	// =================================================================
-	kingpin.Parse()
-	config := sarama.NewConfig()
-	config.Consumer.Return.Errors = true
-	brokers := *brokerList
-	master, err := sarama.NewConsumer(brokers, config)
-	if err != nil {
-		log.Panic(err)
-	}
-	defer func() {
-		if err := master.Close(); err != nil {
-			log.Panic(err)
-		}
-	}()
-	consumer, err := master.ConsumePartition(*topic, 0, sarama.OffsetOldest)
-	if err != nil {
-		log.Panic(err)
-	}
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt)
-	doneCh := make(chan struct{})
-	go func() {
-		log.Println("Processed")
-
-		for {
-		log.Println("Processed11")
-
-			select {
-			case err := <-consumer.Errors():
-				log.Println(err)
-			case msg := <-consumer.Messages():
-				*messageCountStart++
-				log.Println("Received messages", string(msg.Key), string(msg.Value))
-				consumer.Close()
-				doneCh <- struct{}{}
-				return
-			case <-signals:
-				log.Println("Interrupt is detected")
-				doneCh <- struct{}{}
-			}
-		}
-		return
-	}()
-	<-doneCh
-	log.Println("Processed", *messageCountStart, "messages")
-	// =================================================================
-
-	return "sdad", nil
 }
 
 func (r *mutationResolver) Login(ctx context.Context, input model.Login) (string, error) {
@@ -183,76 +77,107 @@ func (r *queryResolver) Links(ctx context.Context) ([]*model.Link, error) {
 	return resultLinks, nil
 }
 
-// !!! WARNING !!!
-// The code below was going to be deleted when updating resolvers. It has been copied here so you have
-// one last chance to move it out of harms way if you want. There are two reasons this happens:
-//   - When renaming or deleting a resolver the old code will be put in here. You can safely delete
-//     it when you're done.
-//   - You have helper methods in this file. Move them out to keep these resolver files clean.
-func CreateTopic(topicName string) {
-	admin, err := kafka.NewAdminClient(&kafka.ConfigMap{"bootstrap.servers": "localhost"})
+func (r *mutationResolver) CreateUser(ctx context.Context, input model.NewUser) (string, error) {
+	broker := "localhost:9092"
+	topic1 := "test1"
+
+	// Create a producer
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": broker})
+	if err != nil {
+		panic(err)
+	}
+	// Produce a message to the topic
+	value := "hello, world"
+	err = producer.Produce(&kafka.Message{
+		TopicPartition: kafka.TopicPartition{Topic: &topic1, Partition: 0},
+		Value:          []byte(value),
+	}, nil)
+	if err != nil {
+		panic(err)
+	}
+	producer.Close()
+
+	// =================================================================
+	config := &kafka.ConfigMap{
+		"bootstrap.servers":                     "localhost:9092",
+		"group.id":                              "test-group",
+		"go.application.rebalance.enable":       true,
+		"acks":                                  "all",
+		"max.in.flight.requests.per.connection": 1,
+	}
+
+	// Create consumer
+	consumer, err := kafka.NewConsumer(config)
+	if err != nil {
+		panic(err)
+	}
+	defer consumer.Close()
+
+	topic := "test1"
+
+	partition := 0
+	tp := kafka.TopicPartition{Topic: &topic, Partition: int32(partition)}
+	err = consumer.Assign([]kafka.TopicPartition{tp})
 	if err != nil {
 		panic(err)
 	}
 
-	defer admin.Close()
-
-	maxDur, err := time.ParseDuration("60s")
+	partitions, err := consumer.Assignment()
 	if err != nil {
-		panic("ParseDuration(60s)")
+		panic(err)
+	}
+	fmt.Printf("Consumer is assigned to partitions: %v\n", partitions)
+
+	sigchan := make(chan os.Signal, 1)
+	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+
+	run := true
+	for run {
+		select {
+		case sig := <-sigchan:
+			fmt.Printf("Caught signal %v: terminating\n", sig)
+			run = false
+		default:
+
+			// Poll for messages
+			ev, err := consumer.ReadMessage(-1)
+			if err != nil {
+				fmt.Println("Timeout")
+				continue
+			}
+			fmt.Println(ev)
+
+			if ev == nil {
+				continue
+			}
+
+			com, err := consumer.CommitOffsets([]kafka.TopicPartition{{Topic: ev.TopicPartition.Topic, Partition: ev.TopicPartition.Partition, Offset: ev.TopicPartition.Offset}})
+			fmt.Println(com, err)
+			// switch e :=ev {
+			// case *kafka.Message:
+			// 	fmt.Printf("Received message on partition %d: %s\n", e.TopicPartition.Partition, string(e.Value))
+
+			// 	// Commit the message offset
+			// 	offset := e.TopicPartition.Offset
+			// 	fmt.Println(e.TopicPartition.Topic, e.TopicPartition.Partition, offset)
+
+			// 	com, err := consumer.CommitMessage(e)
+			// 	fmt.Println(com, err)
+
+			// case kafka.Error:
+			// 	fmt.Fprintf(os.Stderr, "Error: %v\n", e)
+			// 	if e.Code() == kafka.ErrAllBrokersDown {
+			// 		run = false
+			// 	}
+			// default:
+			// 	fmt.Printf("Ignored event: %s\n", ev)
+			// }
+		}
 	}
 
-	ctx := context.Background()
-	// Check if the topic exists
-	exists, err := topicExists(admin, topicName)
-	if exists {
-		fmt.Println("Topic already exists")
-		return
-	}
+	consumer.Close()
 
-	results, err := admin.CreateTopics(
-		ctx,
-		// Multiple topics can be created simultaneously
-		// by providing more TopicSpecification structs here.
-		[]kafka.TopicSpecification{{
-			Topic: topicName,
-		}},
-		// Admin options
-		kafka.SetAdminOperationTimeout(maxDur))
-	if err != nil {
-		log.Printf("Failed to create topic: %v\n", err)
-	}
-
-	log.Println("results:", results)
-
-}
-
-func topicExists(admin *kafka.AdminClient, topic string) (bool, error) {
-	meta, err := admin.GetMetadata(&topic, false, 1000)
-	if err != nil {
-		return false, err
-	}
-
-	if _, ok := meta.Topics[topic]; ok {
-		return true, nil
-	}
-
-	return false, nil
-}
-
-type Consumer struct{}
-
-func (c *Consumer) Setup(sarama.ConsumerGroupSession) error   { return nil }
-func (c *Consumer) Cleanup(sarama.ConsumerGroupSession) error { return nil }
-func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	for msg := range claim.Messages() {
-		fmt.Printf("Message topic:%q partition:%d offset:%d message:%s\n", msg.Topic, msg.Partition, msg.Offset, msg.Value)
-
-		// Mark message as consumed
-		session.MarkMessage(msg, "")
-	}
-
-	return nil
+	return "sdad", nil
 }
 
 // Mutation returns generated.MutationResolver implementation.
