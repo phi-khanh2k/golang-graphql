@@ -16,6 +16,7 @@ require (
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/golang-migrate/migrate v3.5.4+incompatible
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
+	github.com/rs/cors v1.8.3
 	github.com/stretchr/testify v1.8.2 // indirect
 	github.com/vektah/gqlparser/v2 v2.0.1
 	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa
